@@ -1,10 +1,9 @@
-rm checkpoints_test/checkpoint_*
-export CUDA_VISIBLE_DEVICES=0
+rm checkpoints_sent/checkpoint_*
 python train_qe.py \
+	"qe_data_dir" \
 	--ddp-backend=no_c10d \
-	--save-dir checkpoints_test \
+	--save-dir checkpoints_sent \
 	--restore-estimator-file checkpoint_best.pt \
-	../fairseq-qe/ccmt19_qe/data4/ \
 	-s en \
 	-t zh \
 	--ter hter \
@@ -23,7 +22,7 @@ python train_qe.py \
 	--min-lr 1e-09 \
 	--max-tokens 1024 \
 	--save-interval-updates 1 \
-	--restore-file ../../fairseq-qe/checkpoints/dual/checkpoint15.pt \
+	--restore-file "NMT_predictor_checkpoint" \
 	--reset-optimizer \
 	--reset-dataloader \
 	--raw-text \
@@ -36,7 +35,7 @@ python train_qe.py \
 	--estimator-xml-only 0 \
 	--estimator-hidden-dim 512 \
 	--valid-subset dev \
-	--xml-model-path ../fairseq-qe/xml_model/mlm_tlm_xnli15_1024.pth \
+	--xml-model-path "XLM_checkpoint" \
 	--loss-combine=0.5  \
 	--xml-tgt-only=1 \
 	--topk-time-step=3 \

@@ -1,9 +1,8 @@
-export CUDA_VISIBLE_DEVICES=1
-CUDA_LAUNCH_BLOCKING=1 python train_qe_word.py \
+python train_qe_word.py \
+	"qe_data_dir" \
         --ddp-backend=no_c10d \
         --save-dir checkpoints_word \
-        --restore-estimator-file checkpoint_best.pt \
-        ../fairseq-qe/ccmt19_qe/data4 \
+        --restore-estimator-file "QE_word_checkpoint" \
         -s en \
         -t zh \
         --ter hter \
@@ -22,7 +21,7 @@ CUDA_LAUNCH_BLOCKING=1 python train_qe_word.py \
         --min-lr 1e-09 \
         --max-tokens 1024 \
         --save-interval-updates 1 \
-        --restore-file ../../fairseq-qe/checkpoints/dual/checkpoint15.pt \
+        --restore-file "NMT_predictor_checkpoint" \
         --reset-optimizer \
         --reset-dataloader \
         --raw-text \
@@ -35,7 +34,7 @@ CUDA_LAUNCH_BLOCKING=1 python train_qe_word.py \
         --estimator-xml-only 0 \
         --estimator-hidden-dim 512 \
         --valid-subset test \
-        --xml-model-path ../fairseq-qe/xml_model/mlm_tlm_xnli15_1024.pth \
+        --xml-model-path "XLM_checkpoint" \
         --loss-combine=0.5  \
         --xml-tgt-only=0 \
         --topk-time-step=3 \
