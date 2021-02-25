@@ -1,5 +1,4 @@
 rm checkpoints_sent/checkpoint_*
-export CUDA_VISIBLE_DEVICES=0
 python train_qe.py \
 	"qe_data_dir" \
 	--ddp-backend=no_c10d \
