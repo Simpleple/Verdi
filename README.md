@@ -32,4 +32,4 @@ python train.py \
 
 Refer to [train.sh](train.sh) and [infer.sh](infer.sh) for sentence-level training and inference.
 
-Refer to [train_word.sh](train_word.sh) and [infer_word.sh](infer_word.sh) for sentence-level training and inference.
+Refer to [train_word.sh](train_word.sh) and [infer_word.sh](infer_word.sh) for word-level training and inference.
