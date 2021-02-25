@@ -201,11 +201,12 @@ class TranslationQEWordTask(TranslationMTask):
     def expert_index(self, i):
         return i + self.tgt_dict.index('<expert_0>')
 
-    def get_experts_decoder_output(self, predictor, estimator, sample, xml_model=None, xml_estimator=None, step=None, prim=True, mode='word'):
+    def get_prediction(self, predictor, estimator, sample, xml_model=None, mode='word'):
         ''' get decoder outputs of all the experts '''
         k = self.args.num_experts
 
         def get_gap_fea():
+            ''' get NMT features '''
             predictor.eval()
             encoder = predictor.encoder
             encoder_out = torch.zeros((sample['net_input']['src_tokens'].shape[1],
@@ -219,18 +220,8 @@ class TranslationQEWordTask(TranslationMTask):
             net_outputs = []
             i_equals = []
             for i in range(k):
-                if prim:
-                    decoder = predictor.decoder
-                    prev_output_tokens_k = sample['net_input']['prev_output_tokens'].clone()
-                else:
-                    decoder = predictor.encoder
-                    prev_output_tokens_k = torch.zeros_like(sample['net_input']['src_tokens']).fill_(
-                        predictor.encoder.embed_positions.padding_idx)
-                    target_lens = torch.sum(
-                        sample['net_input']['src_tokens'] != predictor.encoder.embed_positions.padding_idx, dim=1)
-                    for j in range(prev_output_tokens_k.shape[0]):
-                        prev_output_tokens_k[j, 0] = 2
-                        prev_output_tokens_k[j, 1:target_lens[0]] = sample['net_input']['src_tokens'][j, :target_lens[0] - 1]
+                decoder = predictor.decoder
+                prev_output_tokens_k = sample['net_input']['prev_output_tokens'].clone()
 
                 assert not prev_output_tokens_k.requires_grad
                 prev_output_tokens_k[:, 0] = self.expert_index(i)
@@ -280,10 +271,7 @@ class TranslationQEWordTask(TranslationMTask):
                 net_outputs.append(pre_qefv_dual)
             net_outputs = torch.cat(net_outputs, dim=-1)  # -> B x K
 
-            if prim:
-                mask = 1 - torch.eq(sample['target'], 1).unsqueeze(dim=-1   ).type_as(net_outputs)
-            else:
-                mask = 1 - torch.eq(sample['net_input']['src_tokens'], 1).unsqueeze(dim=-1).type_as(net_outputs)
+            mask = 1 - torch.eq(sample['target'], 1).unsqueeze(dim=-1   ).type_as(net_outputs)
             mask_sum = mask.sum()
             mask = mask.repeat(1, 1, net_outputs.shape[-1])
             net_outputs = net_outputs * mask
@@ -404,8 +392,8 @@ class TranslationQEWordTask(TranslationMTask):
                 xml_qefv_debpe = xml_qefv_debpe[:, :max_debpe_len, :]
 
                 if mode == 'word':
-                    prediction = estimator.word_forward_single(mt_qefv_debpe) * 0.8
-                    prediction += estimator.word_forward_single(xml_qefv_debpe) * 0.2
+                    prediction = estimator.word_forward_single(mt_qefv_debpe) * self.args.loss_combine
+                    prediction += estimator.word_forward_single(xml_qefv_debpe) * (1 - self.args.loss_combine)
                 elif mode == 'gap':
                     mt_qefv_gap_1 = torch.zeros(mt_qefv_debpe.shape[0], mt_qefv_debpe.shape[1] + 1,
                                                 mt_qefv_debpe.shape[2]).to(mt_qefv_debpe.device)
@@ -423,8 +411,8 @@ class TranslationQEWordTask(TranslationMTask):
                     xml_qefv_gap_2[:, :-1, :] = xml_qefv_debpe
                     xml_qefv_gap = torch.cat([xml_qefv_gap_1, xml_qefv_gap_2], dim=-1)
 
-                    prediction = estimator.gap_forward_single(mt_qefv_gap) * 0.8
-                    prediction += estimator.gap_forward_single(xml_qefv_gap) * 0.2
+                    prediction = estimator.gap_forward_single(mt_qefv_gap) * self.args.loss_combine
+                    prediction += estimator.gap_forward_single(xml_qefv_gap) * (1 - self.args.loss_combine)
 
                 elif mode == 'src_word':
                     xml_qefv_debpe = torch.zeros_like(xml_qefv)
@@ -443,23 +431,15 @@ class TranslationQEWordTask(TranslationMTask):
 
         return prediction
 
-    def _get_qe_loss(self, sample, predictor, estimator, criterion, xml_model=None, valid=False, xml_estimator=None, step=None, prim=True, mode='word'):
+    def _get_qe_loss(self, sample, predictor, estimator, criterion, xml_model=None, valid=False):
         assert hasattr(criterion, 'compute_loss'), \
             'translation_moe task requires the criterion to implement the compute_loss() method'
 
         bsz = sample['target'].size(0)
 
-        # compute loss with dropout
-        if mode == 'word':
-            input = sample['word_tags']
-        elif mode == 'gap':
-            input = sample['gap_tags']
-        elif mode == 'src_word':
-            input = sample['src_word_tags']
-
         input = sample['word_tags']
         mask = (input != -1)
-        wd_prediction = self.get_experts_decoder_output(predictor, estimator, sample, xml_model=xml_model, xml_estimator=xml_estimator, step=step, prim=prim, mode='word')
+        wd_prediction = self.get_prediction(predictor, estimator, sample, xml_model=xml_model, mode='word')
         wd_prediction = wd_prediction.squeeze(-1)
         masked_prediction = wd_prediction.transpose(0, 1).masked_select(mask)
         gt = input.masked_select(mask)
@@ -468,7 +448,7 @@ class TranslationQEWordTask(TranslationMTask):
 
         input = sample['gap_tags']
         mask = (input != -1)
-        gap_prediction = self.get_experts_decoder_output(predictor, estimator, sample, xml_model=xml_model, xml_estimator=xml_estimator, step=step, prim=prim, mode='gap')
+        gap_prediction = self.get_prediction(predictor, estimator, sample, xml_model=xml_model, mode='gap')
         gap_prediction = gap_prediction.squeeze(-1)
         masked_prediction = gap_prediction.transpose(0, 1).masked_select(mask)
         gt = input.masked_select(mask)
@@ -483,7 +463,6 @@ class TranslationQEWordTask(TranslationMTask):
             'ntokens': sample['ntokens'],
             'sample_size': sample_size,
             'posterior': [wd_prediction.cpu(), gap_prediction.cpu()],
-            'mode': mode,
         }
         return loss, sample_size, logging_output
 
@@ -551,27 +530,21 @@ class TranslationQEWordTask(TranslationMTask):
         }
         return loss, sample_size, logging_output
 
-    def train_step(self, sample, predictor, estimator, criterion, optimizer, ignore_grad=False, xml_model=None, xml_estimator=None, step=None, prim=True, mode='gap'):
-        if xml_estimator is not None:
-            xml_estimator.train()
+    def train_step(self, sample, predictor, estimator, criterion, optimizer, ignore_grad=False, xml_model=None):
         estimator.train()
         loss, sample_size, logging_output = self._get_qe_loss(sample, predictor, estimator, criterion,
-                                                              xml_model=xml_model, xml_estimator=xml_estimator,
-                                                              step=step, prim=prim, mode=mode)
+                                                              xml_model=xml_model)
         if ignore_grad:
             loss *= 0
         optimizer.backward(loss)
         return loss, sample_size, logging_output
 
-    def valid_step(self, sample, predictor, estimator, criterion, xml_model=None, xml_estimator=None, step=None, prim=True, mode='gap'):
+    def valid_step(self, sample, predictor, estimator, criterion, xml_model=None):
         predictor.eval()
         estimator.eval()
-        if xml_estimator is not None:
-            xml_estimator.eval()
         with torch.no_grad():
             loss, sample_size, logging_output = self._get_qe_loss(sample, predictor, estimator, criterion,
-                                                                  xml_model=xml_model, valid=True, xml_estimator=xml_estimator,
-                                                                  step=step, prim=True, mode=mode)
+                                                                  xml_model=xml_model, valid=True)
         return loss, sample_size, logging_output
 
     def inference_step(self, generator, models, sample, prefix_tokens=None, expert=None):
